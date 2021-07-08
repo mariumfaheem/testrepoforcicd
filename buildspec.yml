@@ -1,0 +1,26 @@
+---
+version: 0.2
+phases:
+  install:
+    commands:
+      - export PATH=$PWD/:$PATH
+      - apt-get update && apt-get -y install jq python3-pip python3-dev && pip3 install --upgrade awscli
+      - make build-artifacts version=2021.27.02
+  pre_build:
+    commands:
+      - TAG="$REPOSITORY_NAME.$REPOSITORY_BRANCH.$ENVIRONMENT_NAME.$(date +%Y-%m-%d.%H.%M.%S).$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | head -c 8)"
+      - sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI:$TAG"'@' containerization.yml
+  build:
+    commands:
+      - docker build --tag $REPOSITORY_URI:$TAG .
+  post_build:
+    commands:
+      - docker push $REPOSITORY_URI:$TAG
+      - CREDENTIALS=$(aws sts assume-role --role-arn $EKS_KUBECTL_ROLE_ARN --role-session-name codebuild-kubectl --duration-seconds 900)
+      - export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+      - export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+      - export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+      - export AWS_EXPIRATION=$(echo ${CREDENTIALS} | jq -r '.Credentials.Expiration')
+      - printf '[{"name":"containerization","imageUri":"%s"}]' $REPOSITORY_URI:$TAG > build.json
+artifacts:
+  files: build.json
